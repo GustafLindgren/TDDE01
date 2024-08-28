@@ -1,0 +1,230 @@
+---
+output:
+  pdf_document: default
+---
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+# Assignment 3
+
+**Writing:** Anton Jervebo**\
+Code:** Anton Jervebo**\
+Analysis:** Olof Simander, Gustaf Lindgren, Anton Jervebo**\
+Results discussed by:** Olof Simander, Gustaf Lindgren, Anton Jervebo
+
+## Step 1
+
+-   scale the data, making sure the mean is 0 (centered)
+
+-   calculate covariance matrix
+
+-   calculate eigenvalues from the covariance matrix
+
+-   calculate percentage of the variance that each of the components have
+
+To obtain at least 95 % of the variance, 35 components are needed.
+
+The first 2 principal components have 41.95 % of the variation
+
+```{r}
+#3.1
+
+library(dplyr)
+library(tidyr)
+library(caret)
+set.seed(12345)
+
+mydata=read.csv("communities.csv")
+data1=mydata
+
+#Scaling the data, except for ViolentCrimesPerPop
+scaledData=scale(data1[, !names(data1) %in% c("ViolentCrimesPerPop")], TRUE, TRUE)
+
+#Covariance matrix
+S=cov(scaledData)
+
+#Eigenvalues
+eig=eigen(S)
+eigenvalues=eig$values
+
+#number of componentes for 95 % of variance
+expVar=eigenvalues/sum(eigenvalues)*100
+cumulativeVariance=cumsum(expVar)
+
+numComponents=min(which(cumulativeVariance>95))
+head(numComponents)
+
+sprintf("Proportion of varition explained by the first 2 pricipal components is %2.3f percent",expVar[1]+expVar[2])
+```
+
+## Step 2
+
+-   Repeat PCA with princomp()
+
+-   determine the 5 features which contribute the most
+
+-   Plot in the PC1, PC2 coordinates
+
+The top contributing are the following (explanations from website:
+
+-   medFamInc: median family income (differs from household income for non-family households) (numeric - decimal) 
+
+-   medIncome: median household income (numeric - decimal) 
+
+-   PctKids2Par: percentage of kids in family housing with two parents (numeric - decimal) 
+
+-   PctWInvInc: percentage of households with investment / rent income in 1989 (numeric - decimal) 
+
+-   PctPopUnderPov: percentage of people under the poverty level (numeric - decimal) 
+
+We find income, number of kids, investments, and poverty. The first 4 are negative which means they are negatively correlated with PC1. The last one, PctPopUnderPov has a positive correlation on PC1. The ones that correlate negatively are related to a stable economy and family situation. The worse they are, the higher the crime rate. PctPopUnderPov behaves the opposite. The higher it is, the higher the crime rate.
+
+Looking at the plot in the [PC1,PC2] coordinates, we can see that the the highest crime rate can be found on the right half. Higher values PC1 seem to correlate to a higher crime rate. The same can't be said about PC2, where the high crime rate is spread across the height of the plot.
+
+```{r}
+#3.2
+
+summary(scaledData)
+res=princomp(scaledData)
+
+#Plot of the contributions, ordered from largest to smallest
+U=res$loadings[,1]
+plot(abs(U[order(abs(U), decreasing = TRUE)]), main="Trace Plot, PC1")
+
+# Finding the features with the lowest absolute values
+top_contributions = U[order(abs(U),decreasing=TRUE)[1:5]]
+top_contributions
+
+
+# Plotting the PC scores in the coordinates [PC1, PC2]
+resScores=data.frame(res$scores)
+rbPal = colorRampPalette(c('blue', 'green', 'red'))
+resScores$col=rbPal(10)[as.numeric(cut(data1$ViolentCrimesPerPop,breaks = 10))]
+plot(resScores[,1:2], main="Plot in PC1, PC2 coordinates. \n Red means high crime rate, green medium, blue low", pch=20, xlab="PC1", ylab="PC2", col=resScores$col)
+
+```
+
+## Step 3
+
+-   Split the data (50/50) and scale
+
+-   estimate linear regression model
+
+-   compute training and test error
+
+The r2 is quite high, which would indicate the data fits the model pretty good. It's higher for the training data than the test data, which would make sense since it's trained on that data. The r2 for the test data is in the vicinity of the r2 train, which means it generalizes well. The same tendencies can be seen in the MSE for test and training data, with a higher MSE for test than train
+
+```{r}
+#3.3
+
+#load data again
+data2=mydata
+
+#Split data
+set.seed(12345)
+n=nrow(data2)
+id=sample(1:n, floor(n*0.5))
+
+train=data2[id,]
+test=data2[-id,]
+
+#scale data
+scaler=preProcess(train)
+trainS=predict(scaler,train)
+
+testS=predict(scaler,test)
+
+#Linear Regression
+fit=lm(ViolentCrimesPerPop~.,data=trainS)
+
+#compute MSE for train and test
+y_hat_train=predict(fit)
+trainMSE=mean((trainS$ViolentCrimesPerPop-y_hat_train)^2)
+
+y_hat_test=predict(fit, newdata = testS)
+testMSE=mean((testS$ViolentCrimesPerPop-y_hat_test)^2)
+
+cat("MSE train data: ", trainMSE, "\nMSE test data: ", testMSE)
+
+#compute r2
+SSR=sum((y_hat_test-testS$ViolentCrimesPerPop)^2)
+SST=sum((testS$ViolentCrimesPerPop - rep(mean(testS$ViolentCrimesPerPop),dim(testS)[1]))^2)
+test_r2 = 1 - SSR/SST
+r2 = c(summary(fit)$r.squared,test_r2)
+r2
+```
+
+## Step 4
+
+-   implement function that depends on the vector $$ \theta $$ that represents the cost function
+
+-   Optimize the cost
+
+-   Plot the dependence of iterations for training and test errors
+
+-   compare the optimal model with the linear regression model from 3.3
+
+The optimization stopped after 100 iterations.
+
+Comparing the test errors from the linear regression model in 3.3 and the optimal model, we can see that we get identical MSEs between the models. Therefore we can assume that the 2 models are indifferent in performance.
+
+```{r}
+#3.4
+
+#for saving the values calculated in the function
+train_MSEs=rep(0,0)
+test_MSEs=rep(0,0)
+
+#cost function
+cost_fn=function(theta, X_train, y_train, X_test, y_test) {
+  train_MSE2 = mean((X_train%*%theta-y_train)^2)
+  train_MSEs <<- append(train_MSEs, mean((X_train%*%theta-y_train)^2))
+  
+  test_MSE2 = mean((X_test%*%theta-y_test)^2)
+  test_MSEs <<- append(test_MSEs, test_MSE2)
+  
+  return(train_MSE2)
+}
+
+#X and Y values for train and test
+X_train = as.matrix(trainS[,1:(dim(trainS)[2]-1)])
+y_train = as.matrix(trainS[c('ViolentCrimesPerPop')])
+
+X_test = as.matrix(testS[,1:(dim(testS)[2]-1)])
+y_test = as.matrix(testS[c('ViolentCrimesPerPop')])
+
+#theta_0
+theta_0 = rep(0,dim(X_train)[2])
+theta_0 = as.matrix(theta_0)
+
+set.seed(12345)
+
+#optimize cost
+opti_cost=optim(par=theta_0, fn=cost_fn, X_train=X_train ,y_train=y_train, X_test=X_test, y_test=y_test, method="BFGS", control=list(trace=TRUE))
+
+#optimal theta
+theta_optimal = opti_cost$par
+theta_optimal 
+
+#Discard the first iterations
+discarded = 200
+filtered_train_data = train_MSEs[c(TRUE, rep(FALSE, discarded))]
+filtered_test_data = test_MSEs[c(TRUE, rep(FALSE, discarded))]
+train_MSEs[c(TRUE,rep(FALSE,discarded))]
+
+plot(filtered_train_data, xlim=c(0,max(dim(as.matrix(filtered_train_data)))), ylim=c(0,1.5), pch=20, col="black", main="MSE:\n train: black, test:red", ylab="MSE")
+points(filtered_test_data, col="red", pch=20)
+
+#calculating the MSE for the optimal theta values
+optimal_train_MSE = mean((X_train %*% theta_optimal - y_train)^2)
+optimal_test_MSE = mean((X_test %*% theta_optimal - y_test)^2)
+
+optimal_MSE = c(optimal_train_MSE, optimal_test_MSE)
+optimal_MSE
+
+
+```

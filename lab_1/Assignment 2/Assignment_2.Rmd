@@ -1,0 +1,161 @@
+---
+output:
+  pdf_document: default
+---
+
+# Assignment 2:
+
+```{r, echo=FALSE, results='hide'}
+library(knitr)
+```
+
+**Step 1**
+
+In this step, the data is split into a training data set (60%) and a test data set (40%). The data is then scaled by using the preProcess function. This is necessary to construct good regression models.
+
+```{r, echo=FALSE, warning=FALSE, results='hide'}
+library(dplyr)
+library(tidyr)
+library(caret) #for preprocessing of data
+```
+
+```{r, echo=FALSE}
+set.seed(12345)
+data = read.csv("parkinsons.csv")
+
+n=dim(data)[1]
+set.seed(12345)
+id=sample(1:n, floor(n*0.6))
+train= tibble(data[id,])
+test=tibble(data[-id,])
+
+scaler=preProcess(data)
+trainS=predict(scaler,train)
+testS=predict(scaler,test)
+trainS
+```
+
+**Step 2**
+
+In this step, the linear model is constructed. The Parkinson disease symptom score (motor_UPDRS) is predicted based on variables representing voice characteristics. The mean square error for the training and test data is computed.
+
+```{r, echo=FALSE}
+# Computing the linear model and the MSE for the training data
+m1 = lm(motor_UPDRS~ Jitter... + Jitter.Abs. + Jitter.RAP +
+          Jitter.PPQ5 + Jitter.DDP + Shimmer + Shimmer.dB. +
+          Shimmer.APQ3 + Shimmer.APQ5 + Shimmer.APQ11 +
+          Shimmer.DDA + NHR + HNR + RPDE + DFA + PPE, data = trainS)
+summary(m1)
+preds = predict(m1, trainS)
+MSE = sum((trainS$motor_UPDRS - preds)^2) / length(preds)
+MSE
+```
+
+```{r, echo=FALSE}
+# MSE for the test data
+preds = predict(m1, testS)
+MSE = sum((testS$motor_UPDRS - preds)^2) / length(preds)
+MSE
+```
+
+By looking at the p-value (forth column )for the estimated values of the coefficients, we can determine that the independent variables *Jitter.Abs, Shimmer.APQ5, Shimmer.APQ11, NHR, HNR, DFA,* and *PPE* contribute significantly to the model.
+
+**Task 3**
+
+The formulas for completing this were found in the lecture slides unless something else is stated.
+
+```{r, echo=FALSE}
+# The purpose of this function is to find values for the thetas and
+# sigmas which maximizes the probability for our model to generate the data.
+LogLikelihood <- function(data, theta, sigma){
+  x = as.matrix(data[ ,7:22])
+  y = as.matrix(data[, 5])
+  n = length(y) # observations
+  logLik = -(n/2)*(log(2*pi) + log(sigma^2)) - (2*sigma^2)^-1 * sum((x%*%theta - y)^2) #squared loss is used as the loss function
+  return(logLik)
+}
+```
+
+```{r, echo=FALSE}
+# The purpose of ridge regression is to reduce the variance when the independent
+# variables have high correlarity with one another.This is accomplished by
+# adding a shrinkage penalty which increases the bias a little bit but
+# in turn reduce the variance significantly, which leads to a lower MSE.
+Ridge <- function(sigmaThetas, lambda, data){
+  sigma = sigmaThetas[1]
+  theta = sigmaThetas[-1] #removes first element (sigma)
+  logLik = LogLikelihood(data, theta, sigma)
+  ridge = lambda * sum(theta^2) - logLik
+  return(ridge)
+}
+```
+
+```{r, echo=FALSE}
+RidgeOpt <- function(lambda, data){
+  initSigma = 1
+  initThetas = rep(1, 16)
+  optRes = optim(par=c(initSigma, initThetas), fn=Ridge, lambda=lambda,
+                 data=data, method="BFGS")
+  return(optRes)
+}
+```
+
+```{r, echo=FALSE}
+# formula found at https://online.stat.psu.edu/stat508/lesson/5/5.1 
+DF <- function(lambda, X){
+  I = diag(dim(X)[2])
+  #Sum of diagonal is the same as the trace function (tr)
+  temp = X %*% solve(t(X)%*%X + lambda*I)%*%t(X)
+  dt = sum(diag(temp))
+  return(dt)
+}
+```
+
+**Task 4**
+
+In this task, ridge regression is used with different lambda on the training data. The accuracy of the model is then evaluated by calculating the MSE of the test data and degrees of freedom for each lambda is computed.
+
+```{r, echo=FALSE}
+
+lambda = c(1, 100, 1000)
+#lambda[1] = 1
+#lambda[2] = 100
+#lambda[3] = 1000
+testOpt <- function(lambda) {
+  opt = RidgeOpt(lambda, trainS)
+  sigma = opt$par[1]
+  thetas = as.matrix(opt$par[-1])
+  X_train = as.matrix(trainS[, 7:22])
+  X_test = as.matrix(testS[, 7:22])
+  Y_train = as.matrix(trainS[, 5])
+  Y_test = as.matrix(testS[, 5])
+
+  train_predict = X_train %*% thetas 
+  test_predict = X_test %*% thetas
+  
+  #calculate MSE for train and test data
+  train_MSE = (length(Y_train))^-1 * sum((Y_train - train_predict)^2)
+  test_MSE = (length(Y_test))^-1 * sum((Y_test - test_predict)^2)
+  
+  #calculate degrees of freedom
+  df_train = DF(lambda, X_train)
+  df_test = DF(lambda, X_test)
+  
+  print(paste("lambda:", lambda))
+  print(paste("train MSE:", train_MSE))
+  print(paste("test_MSE:", test_MSE))
+  print(paste("df_test:", df_test))
+  print(paste("df_train", df_train))
+  
+}
+opt1 = testOpt(lambda[1])
+opt2 = testOpt(lambda[2])
+opt3 = testOpt(lambda[3])
+```
+
+We get the lowest test MSE for lambda = 100. This tells us that lambda = 100 is closer to the optimum than lambda = 1 or lambda = 1000 (after a certain threshold, adding a higher shrinkage penalty will result in higher variance, which in turn will result in a higher MSE).
+
+We can see that as lambda increases, the degrees of freedom decrease. This makes sense since if there is no penalization, we have as many parameters as there are in the model. On the contrary, when lambda approaches infinity, the degrees of freedom will approach zero.
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```

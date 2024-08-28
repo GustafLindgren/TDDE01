@@ -1,0 +1,260 @@
+---
+output:
+  pdf_document: default
+---
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+**Writing:\
+Code:\
+Analysis:\
+Results discussed by:**
+
+**Part 1**
+
+ctrl alt i for r code field
+
+```{r}
+set.seed(12345)
+library(knitr)
+library(dplyr)
+library(tidyr)
+data = read.csv("bank-full.csv", header=TRUE, sep=";")
+data = select(data, -duration)
+
+#split data into 40/30/30 training/test/validation, code from lecture
+n=dim(data)[1]
+set.seed(12345)
+id=sample(1:n, floor(n*0.4))
+train=data[id,]
+id1=setdiff(1:n, id)
+set.seed(12345)
+id2=sample(id1, floor(n*0.3))
+valid=data[id2,]
+id3=setdiff(id1,id2)
+test=data[id3,]
+
+```
+
+**Part 2**
+
+```{r}
+library(tree)
+set.seed(12345)
+
+cf_matrix <- function(tree, data, y) {
+
+  Probs = predict(tree, newdata = data)
+  bestI = apply(Probs, MARGIN=1, FUN = which.max)
+  Pred=levels(y)[bestI]
+  cf_matrix = table(y, Pred)
+  return(cf_matrix)
+}
+
+miss_rate = function(cf_matrix) {
+  miss_rate = sum(rowSums(cf_matrix) - diag(cf_matrix)) / sum(cf_matrix)
+  return(miss_rate)
+}
+
+#a. Decision Tree with default settings.
+tree_default = tree(as.factor(y)~., data=train)
+cf_def_train = cf_matrix(tree_default, train, train$y)
+cf_def_valid = cf_matrix(tree_default, valid, valid$y)
+mr_def_train = miss_rate(cf_def_train)
+mr_def_valid = miss_rate(cf_def_valid)
+
+print("Tree with default settings")
+print(paste("Miss rate train:", mr_def_train))
+print(paste("Miss rate valid:", mr_def_valid))
+summary(tree_default)
+plot(tree_default)
+text(tree_default, pretty=0)
+
+#b. Decision Tree with smallest allowed node size equal to 7000
+tree_7000 = tree(as.factor(y)~., data=train, control = tree.control(nrow(data), minsize = 7000))
+cf_7000_train = cf_matrix(tree_7000, train, train$y)
+cf_7000_valid = cf_matrix(tree_7000, valid, valid$y)
+mr_7000_train = miss_rate(cf_7000_train)
+mr_7000_valid = miss_rate(cf_7000_valid)
+
+print("Tree with smallest allowed node size 7000")
+print(paste("Miss rate train:", mr_7000_train))
+print(paste("Miss rate valid:", mr_7000_valid))
+summary(tree_7000)
+plot(tree_7000)
+text(tree_7000, pretty=0)
+
+#c. Decision trees minimum deviance to 0.0005
+tree_0005 = tree(as.factor(y)~., data=train, control = tree.control(nrow(data), mindev = 0.0005))
+cf_0005_train = cf_matrix(tree_0005, train, train$y)
+cf_0005_valid = cf_matrix(tree_0005, valid, valid$y)
+mr_0005_train = miss_rate(cf_0005_train)
+mr_0005_valid = miss_rate(cf_0005_valid)
+
+print("Tree with smallest deviance of 0.0005")
+print(paste("Miss rate train:", mr_0005_train))
+print(paste("Miss rate valid:", mr_0005_valid))
+summary(tree_0005)
+plot(tree_0005)
+#text(tree_0005, pretty=0)
+
+
+
+
+```
+
+By looking at the misclassification rates for the validation data, we can see that the trees with the default settings and the tree with minimum leaf node size of 7000 had the same lowest misclassification rate. Interestingly, the tree size of those two differed, but provided the same result. This makes sense if we plot the decision trees; all outcomes to the left of the *poutcome* node will result in a *no* and therefore, it does not matter if we add more nodes as long as all possible outcomes are *no*.
+
+The tree with the default settings had 6 leaf nodes. When changing the minimum leaf node size to 7000 the tree size decreased to 5 nodes. When the minimum deviance was set to 0.005, the tree size increased significantly to a size of 122 nodes. This makes sense, by setting a higher minimum node size, we allow the nodes to split less. On the contrary, by lowering the minimum deviance (the child node's deviance needs to be at least the deviance of the parent multiplied by the set minimum deviance value in order to be allowed to split), we allow the nodes to split more. Since this significantly bigger tree performed worse the the other two, we can conclude that the model was probably overfitted.
+
+**Part 3**
+
+```{r}
+#code from lecture with some modifications
+set.seed(12345)
+trainScore=rep(0,50)
+testScore=rep(0,50)
+for(i in 2:50) {
+prunedTree=prune.tree(tree_0005,best=i)
+pred=predict(prunedTree, newdata=valid,
+type="tree")
+trainScore[i]=deviance(prunedTree)
+testScore[i]=deviance(pred)
+}
+which.min(testScore[2:50])
+plot(2:50, trainScore[2:50], type="b", col="red",
+ylim=c(8000,12000))
+points(2:50, testScore[2:50], type="b", col="blue")
+
+tree_optimum = prune.tree(tree_0005, best=21)
+plot(tree_optimum)
+text(tree_optimum, pretty=0)
+summary(tree_optimum)
+```
+
+By looking at the minimum score for the deviance in the validation data, we can determine that the tree with 21 leaf nodes had the lowest deviance. By looking at the graph, we can conclude that models with fewer leaf nodes perform worse since they have high bias and therefore tend to not capture all the trends in the training data (underfitting). On the other hand, after a certain threshhold, when the number of leaf nodes increase, the model will start to perform worse since it is overfitted to the training data. This means that the model has low bias (since it predicts the training data well) but high variance as it does not predict future data sets with the same accuracy, or in other words, the model is not very flexible. The model with 21 leaf nodes offers a good tradeoff between the metrics *bias* and *variance* and therefore performs the best.
+
+In all of the models, the variable *poutcome* (the outcome of previous marketing campaigns) is the most important since it is the first decision point in the tree. The non-statistical interpretation of this is that it intuitively makes sense that previous marketing campaigns would predict the outcomes of similar marketing campaigns in the future. Other important variables (based on their position in the tree) are: *month,* and *contact,* though we would argue that they are not really that important since their outcomes do not matter for the model since all leaf nodes to the left of *poutcome* result in a *no.*
+
+**Part 4**
+
+```{r}
+cf_matrix_opt = cf_matrix(tree_optimum, test, test$y)
+cf_matrix_opt
+
+#code from tutorial with minor modifications
+TP= cf_matrix_opt[2,2]
+TN= cf_matrix_opt[1,1]
+FP= cf_matrix_opt[1,2]
+FN= cf_matrix_opt[2,1]
+TPR=TP/(TP+FN)
+FPR=FP/(FP+TN)
+prec=TP/(TP+FP)
+rec=TP/(TP+FN)
+
+f1 = (2*prec*rec) / (prec+rec)
+f1
+miss_rate_opt = miss_rate(cf_matrix_opt)
+miss_rate_opt
+```
+
+The F1 score is useful in this case since the *no* class is much larger than the *yes* class and therefore, just by predicting *no,* it could seem at first glance that the model performs well when the "good" prediction rate in fact comes from the class imbalance. In this case, if we were to predict no all the time, we would get a misclassification rate of 0.108. However, the F1 score tells a different story because it takes the class imbalance in consideration. We got a score of 0.28 which indicates that our model in fact performs poorly.
+
+**Part 5**
+
+```{r}
+set.seed(12345)
+Probs = predict(tree_optimum, newdata = test)
+Losses=Probs%*%matrix(c(0,5,1,0), nrow=2)
+bestI=apply(Losses, MARGIN=1, FUN = which.min)
+Pred=levels(test$y)[bestI]
+cf_loss = table(test$y, Pred)
+cf_loss
+
+TP= cf_loss[2,2]
+TN= cf_loss[1,1]
+FP= cf_loss[1,2]
+FN= cf_loss[2,1]
+
+prec=TP/(TP+FP)
+rec=TP/(TP+FN)
+
+f1 = (2*prec*rec) / (prec+rec)
+f1
+miss_rate_loss = miss_rate(cf_loss)
+miss_rate_loss
+```
+
+By adding the loss matrix, we can weight the prediction so certain outcomes are avoided by the model e.g., in screening for diseases, the worst outcome would be a false negative, the consequences for that would be far worse than a false positive. In this model, we weight it so that it is five times worse to give a false positive compared to a false negative. By doing this, the F1 score increased significantly to 0.486, however the overall accuracy decreased a little (the misclassification rate increased to 0.127). Depending on the application (as described above), this could be a beneficial trade-off.
+
+**Part 6**
+
+```{r}
+set.seed(12345)
+pi = seq(0.05,0.95,0.05)
+# Store TPR, FPR for each row
+#ROCs_tree = matrix(1,2, length(pi))
+#ROCs_log = matrix(1,2, length(pi))
+tpr_tree = matrix(0, nrow=1, ncol=length(pi))
+fpr_tree = matrix(0, nrow=1, ncol=length(pi))
+
+tpr_log = matrix(0, nrow=1, ncol=length(pi))
+fpr_log = matrix(0, nrow=1, ncol=length(pi))
+
+#logistic regression
+m2 = glm(y~., data=train, family = "binomial")
+m2_pred = predict(m2, test, type='response')
+#Probs = predict(tree_optimum, newdata = test)
+
+for (i in 1:length(pi)) {
+  pred_tree = ifelse(Probs[,2]>pi[i], "yes", "no")
+  pred_log = ifelse(m2_pred>pi[i], "yes", "no")
+  
+  cf_tree = table(pred_tree, test$y)
+  #print(cf_tree)
+  # sometimes cf_tree has only one row and then this code will throw errors
+  if (length(cf_tree[,1])>1) {
+    tp_tree = cf_tree[2,2]
+    fn_tree = cf_tree[1,2]
+    fp_tree = cf_tree[2,1]
+    tn_tree = cf_tree[1,1]
+    
+    tpr_tree[i] = tp_tree/(tp_tree+fn_tree)
+    fpr_tree[i] = fp_tree/(fp_tree+tn_tree)
+  }
+ 
+  cf_log = table(pred_log, test$y)
+  print(cf_log)
+  tp_log = cf_log[2,2]
+  fn_log = cf_log[1,2]
+  fp_log = cf_log[2,1]
+  tn_log = cf_log[1,1]
+  
+  tpr_log[i] = tp_log/(tp_log+fn_log)
+  fpr_log[i] = fp_log/(fp_log+tn_log)
+  
+  
+  
+}
+#ROC or Receiver Operating Characteristic curve is used to evaluate logistic regression classification models
+x_grid=seq(0,1,0.01)
+plot(fpr_tree, tpr_tree, col="red", xlim=c(0,1), ylim=c(0,1), xlab="fpr", ylab="tpr")
+points(fpr_log, tpr_log, col="blue")
+lines(x_grid, x_grid)
+
+print("tree")
+print(paste("tpr tree: ", tpr_tree))
+print(paste("fpr tree: ", fpr_tree))
+
+print("log")
+print(paste("tpr log: ", tpr_log))
+print(paste("fpr log: ", fpr_log))
+```
+
+In this assignment, we have calculated the *True Positive Rate* and *False positive rate* for the logistic regression model and the optimal tree from previous exercises. In the *Receiver Operating Characteristic curve (ROC),* we can see that the optimum tree model (red) performs slightly better than the logistic regression model (blue). It can also be concluded that both models can be considered as "good" since they are well above the baseline (y=x) since that would be when the model predicts values randomly.
+
+In this case, since there is a big class imbalance for many of the confusion matrices, it would be more appropriate to evaluate the models with a precision-recall curve instead of a ROC.
